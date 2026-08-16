@@ -347,6 +347,14 @@
   #chatMic.rec{background:var(--miss); color:#fff; border-color:var(--miss)}
   #chatSend{background:var(--teal); color:#fff}
   #chatSend:disabled{opacity:.4}
+  .talk-modes{display:flex; gap:6px; margin:4px 0 10px}
+  .talk-modes button{flex:1; padding:10px 6px; border-radius:12px; border:1.5px solid var(--line); background:var(--card); font-size:13px; font-weight:700; color:var(--ink-soft)}
+  .talk-modes button.on{border-color:var(--teal); background:var(--teal-soft); color:var(--teal)}
+  .cmsg img{max-width:160px; border-radius:10px; display:block; margin-top:6px}
+  #chatPrev{display:none; position:fixed; left:12px; right:12px; bottom:calc(120px + env(safe-area-inset-bottom)); z-index:39; background:#fff; border:1.5px solid var(--line); border-radius:12px; padding:8px; align-items:center; gap:10px}
+  #chatPrev.on{display:flex}
+  #chatPrev img{height:56px; border-radius:8px}
+  #chatPrev span{flex:1; font-size:13px; color:var(--ink-soft)}
   .home-stat{display:flex; gap:10px; margin-top:12px}
   .home-stat .st{flex:1; background:var(--card); border:1px solid var(--line); border-radius:12px;
     padding:10px 12px; text-align:center}
@@ -418,9 +426,12 @@
 <!-- AIトーク入力バー -->
 <div class="chat-input" id="chatInput">
   <button id="chatMic">🎤</button>
+  <button id="chatCam" style="display:none">📷</button>
   <textarea id="chatTa" rows="1" placeholder="英語で話してみよう(日本語でもOK)"></textarea>
   <button id="chatSend">➤</button>
 </div>
+<input type="file" id="chatFile" accept="image/*" capture="environment" style="display:none">
+<div id="chatPrev"><img id="chatPrevImg" alt=""><span>写真を添付中。メッセージ(なくてもOK)を入れて ➤</span><button class="ghost" id="chatPrevX" style="padding:6px 10px">×</button></div>
 
 <!-- 下部ナビ(生徒) -->
 <div id="navBar">
@@ -920,7 +931,7 @@ function apiGet(done, fail){
 }
 function apiPost(p, done){
   if(window.google && google.script && google.script.run){
-    const fn = p.action==='teacher' ? 'teacherApply' : p.action==='bulk' ? 'bulkAppend' : p.action==='audio' ? 'saveAudioRec' : p.action==='login' ? 'verifyStudent' : p.action==='mastery' ? 'saveMastery' : p.action==='chat' ? 'chatRelay' : p.action==='settings' ? 'saveSettings' : p.action==='chattest' ? 'chatTest' : 'saveRecord';
+    const fn = p.action==='teacher' ? 'teacherApply' : p.action==='bulk' ? 'bulkAppend' : p.action==='audio' ? 'saveAudioRec' : p.action==='login' ? 'verifyStudent' : p.action==='mastery' ? 'saveMastery' : p.action==='chat' ? 'chatRelay' : p.action==='settings' ? 'saveSettings' : p.action==='chattest' ? 'chatTest' : p.action==='genpron' ? 'genPron' : 'saveRecord';
     google.script.run
       .withSuccessHandler(r=>done(p.action ? (r&&r.ok) : true, r&&r.error, r))
       .withFailureHandler(()=>done(false))[fn](p);
@@ -1021,6 +1032,7 @@ function load(){
     DATA=d;
     DATA.questions=DATA.questions||[];
     mastLoad(DATA.mastery);
+    talkLoadHistory();
     renderHome();
     if(TKEY){ renderTeacher(); }
     else tutorGreet();
@@ -1072,6 +1084,8 @@ const FB={
   result_low:[['{pct}%か…大丈夫、くり返せば必ずできる!','think']],
   submit_ok:[['提出できたよ。おつかれさま!','happy']],
   talk_reply:[['英語の行はタップすると読み上げるよ','normal']],
+  tab_write:[['作文モードだよ。書いた英文を貼るか、ノートを写真に撮って送ってね','normal']],
+  write_reply:[['①文法 ②表現 ③構成、の順に読んでみて。直したらもう一度送ってもいいよ','think']],
   test_start:[['テストだよ。おちついて、じっくりね','think']],
   login:[['{name}、はじめよう!','happy']]
 };
@@ -1108,20 +1122,19 @@ function tutorScoreComment(pct, type){
   tutorScene(pct>=90?'result_high':pct>=70?'result_mid':'result_low', {pct:pct});
 }
 
-/* ================= AIトーク(ChatGPT中継) ================= */
-let TALK=[], talkBusy=false;
-function talkSeed(){
-  if(TALK.length) return;
-  TALK.push({role:'assistant', content:'Hi'+(NAME?', '+NAME.replace(/^.*\s/,''):'')+'!\nWhat do you want to talk about?\n(何について話したい? じこしょうかいからでもいいよ。英語の行はタップすると読み上げるよ)'});
+/* ================= AIトーク(Day1 会話 / Day2 作文 / Day3 ChatGPT) ================= */
+let TALKS={'会話':[], '作文':[]}, talkMode='会話', talkBusy=false, chatImg=null;
+function TALK(){ return TALKS[talkMode]; }
+function talkLoadHistory(){
+  TALKS={'会話':[], '作文':[]};
+  (DATA.talks||[]).forEach(t=>{ const m=t.mode==='作文'?'作文':'会話'; TALKS[m].push({role:t.role, content:t.content}); });
 }
-function engLines(text){
-  // 英語の行だけ抽出して読み上げ用に返す
-  return String(text).split(/\n/).map(l=>l.trim())
-    .filter(l=>{
-      const letters=(l.match(/[A-Za-z]/g)||[]).length;
-      return letters>=4 && letters/Math.max(1,l.replace(/\s/g,'').length)>0.6;
-    })
-    .map(l=>l.replace(/^[★*\-•\d.)\s]+/,'')).join(' ');
+function talkSeed(){
+  if(TALK().length) return;
+  if(talkMode==='会話')
+    TALK().push({role:'assistant', content:'Hi'+(NAME?', '+NAME.replace(/^.*\s/,''):'')+'!\nWhat do you want to talk about?\n(何について話したい? じこしょうかいからでもいいよ。英語の行はタップすると読み上げるよ)'});
+  else
+    TALK().push({role:'assistant', content:'英作文の添削モードだよ。\n書いた英文をここに貼るか、📷でノートの写真を撮って送ってね。\n①文法・語彙 ②表現 ③構成 の3つの目で見て、日本語でアドバイスするよ。'});
 }
 function isEnLine(l){
   const letters=(l.match(/[A-Za-z]/g)||[]).length;
@@ -1135,15 +1148,22 @@ function renderTalk(){
     return;
   }
   talkSeed();
-  let html='<div class="chat-box" id="chatBox">';
-  TALK.forEach((m,i)=>{
-    if(m.role==='user'){ html+=`<div class="cmsg me">${esc(m.content)}</div>`; return; }
-    // 英語の行はタップで1文ずつ読み上げ
+  let html='<div class="talk-modes">'
+    +`<button data-m="会話" class="${talkMode==='会話'?'on':''}">💬 会話</button>`
+    +`<button data-m="作文" class="${talkMode==='作文'?'on':''}">✍️ 作文添削</button>`
+    +`<button data-m="gpt">🔗 ChatGPTで自由に</button>`
+    +'</div>';
+  html+='<div class="chat-box" id="chatBox">';
+  TALK().forEach((m,i)=>{
+    if(m.role==='user'){
+      const isImg=/^\[写真\]/.test(m.content);
+      html+=`<div class="cmsg me">${esc(m.content.replace(/^\[写真\]\s*/,''))}${m.img?`<img src="${m.img}" alt="">`:(isImg?'<br><span style="opacity:.8; font-size:12px">📷 写真を送信</span>':'')}</div>`; return;
+    }
     const body=String(m.content).split(/\n/).map(l=>{
       const t=l.trim();
       if(!t) return '';
       if(isEnLine(t)){
-        const sayText=t.replace(/^[★*\-•\d.)\s]+/,'');
+        const sayText=t.replace(/^[★*\-•\d.)→\s]+/,'').replace(/[「」]/g,'');
         return `<span class="sline" data-say="${escA(sayText)}">🔉 ${esc(t)}</span>`;
       }
       return esc(t);
@@ -1153,36 +1173,66 @@ function renderTalk(){
   if(talkBusy) html+='<div class="cmsg ai typing">'+esc(tutorNamed())+'が考えています…</div>';
   html+='</div>';
   el.innerHTML=html;
-  el.querySelectorAll('.sline').forEach(b=>{
-    b.onclick=()=>{ synth.cancel(); speak(b.dataset.say, null); };
+  el.querySelectorAll('.talk-modes button').forEach(b=>b.onclick=()=>{
+    if(b.dataset.m==='gpt'){ window.open('https://chatgpt.com/', '_blank'); return; }
+    talkMode=b.dataset.m; chatImgClear(); renderTalk();
+    $('chatCam').style.display = talkMode==='作文' ? 'inline-flex' : 'none';
+    $('chatTa').placeholder = talkMode==='作文' ? '英作文をここに貼る(または📷で写真)' : '英語で話してみよう(日本語でもOK)';
+    tutorScene(talkMode==='作文'?'tab_write':'tab_talk');
   });
+  el.querySelectorAll('.sline').forEach(b=>{ b.onclick=()=>{ synth.cancel(); speak(b.dataset.say, null); }; });
+  $('chatCam').style.display = talkMode==='作文' ? 'inline-flex' : 'none';
   const box=$('chatBox');
   if(box && $('pane-talk').classList.contains('on')) box.scrollTop=box.scrollHeight;
 }
 function talkSend(){
   const ta=$('chatTa');
   const text=ta.value.trim();
-  if(!text||talkBusy) return;
+  if((!text && !chatImg)||talkBusy) return;
   if(!NAME){ openGate(); return; }
-  TALK.push({role:'user', content:text});
+  const um={role:'user', content:(chatImg?'[写真] ':'')+(text||'')};
+  if(chatImg) um.img=chatImg;
+  TALK().push(um);
+  const imgs=chatImg?[chatImg]:[];
+  chatImgClear();
   ta.value=''; ta.style.height='auto';
   talkBusy=true; $('chatSend').disabled=true;
   renderTalk();
-  apiPost({action:'chat', name:NAME, messages:TALK.map(m=>({role:m.role, content:m.content}))}, (ok,err,r)=>{
+  const hist=TALK().map(m=>({role:m.role, content:m.content.replace(/^\[写真\]\s*/,'')}));
+  apiPost({action:'chat', name:NAME, mode:talkMode, messages:hist, images:imgs}, (ok,err,r)=>{
     talkBusy=false; $('chatSend').disabled=false;
     if(ok && r && r.reply){
-      TALK.push({role:'assistant', content:r.reply});
+      TALK().push({role:'assistant', content:r.reply});
       renderTalk();
-      tutorScene('talk_reply');
+      tutorScene(talkMode==='作文'?'write_reply':'talk_reply');
     }else{
-      TALK.push({role:'assistant', content:'⚠ '+(err||'通信に失敗しました。もう一度ためしてね')});
+      TALK().push({role:'assistant', content:'⚠ '+(err||'通信に失敗しました。もう一度ためしてね')});
       renderTalk();
     }
   });
 }
+function chatImgClear(){ chatImg=null; $('chatPrev').classList.remove('on'); }
+$('chatCam').onclick=()=>$('chatFile').click();
+$('chatPrevX').onclick=chatImgClear;
+$('chatFile').onchange=e=>{
+  const f=e.target.files&&e.target.files[0]; e.target.value='';
+  if(!f) return;
+  const img=new Image(), url=URL.createObjectURL(f);
+  img.onload=()=>{
+    const MAX=1280, sc=Math.min(1, MAX/Math.max(img.width,img.height));
+    const cv=document.createElement('canvas'); cv.width=Math.round(img.width*sc); cv.height=Math.round(img.height*sc);
+    cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+    URL.revokeObjectURL(url);
+    chatImg=cv.toDataURL('image/jpeg',0.8);
+    $('chatPrevImg').src=chatImg; $('chatPrev').classList.add('on');
+    $('chatTa').focus();
+  };
+  img.onerror=()=>{ toast('写真を読みこめませんでした'); };
+  img.src=url;
+};
 $('chatSend').onclick=talkSend;
 $('chatTa').addEventListener('keydown', e=>{
-  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); talkSend(); }
+  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&talkMode==='会話'){ e.preventDefault(); talkSend(); }
 });
 $('chatTa').addEventListener('input', function(){ this.style.height='auto'; this.style.height=Math.min(90,this.scrollHeight)+'px'; });
 /* 音声入力(英語認識→入力欄へ) */
@@ -1217,16 +1267,32 @@ function renderHome(){ renderHomeTab(); renderRead(); renderWord(); renderQ(); r
 /* ================= ホームタブ(ミッション+統計) ================= */
 function renderHomeTab(){
   const el=$('pane-home');
-  const st=streakDays();
   const wq=qWeakPool().length, wl=weakList().length;
+  const recs=DATA.records||[];
+  const avg=recs.length?Math.round(recs.reduce((s,r)=>s+(r.score||0),0)/recs.length):0;
+  const hwDone=DATA.homework.filter(h=>latestRec(h.task)).length;
   let html=missionHtml();
   html+='<div class="home-stat">'
-    +`<div class="st"><b>${st>0?'🔥'+st:'—'}</b><span>連続日数</span></div>`
-    +`<div class="st"><b>${DATA.records.length}</b><span>これまでの提出</span></div>`
-    +`<div class="st"><b>${wq+wl}</b><span>にがて(問題+単語)</span></div>`
+    +`<div class="st"><b>${hwDone}/${DATA.homework.length}</b><span>宿題 提出</span></div>`
+    +`<div class="st"><b>${recs.length}</b><span>れんしゅう回数</span></div>`
+    +`<div class="st"><b>${recs.length?avg+'%':'—'}</b><span>平均スコア</span></div>`
+    +`<div class="st"><b>${wq+wl}</b><span>にがて</span></div>`
     +'</div>';
+  // 最近のきろく
+  if(recs.length){
+    html+='<div class="dash-sec" style="margin-top:16px">📄 さいきんのきろく</div>';
+    html+=recs.slice(-5).reverse().map(r=>`<div class="feedline">${esc(r.date)} ${esc(r.task)} — <b>${r.score}%</b> <span style="font-size:12px">(${esc(r.type)})</span></div>`).join('');
+  }
   if(DATA.tutor&&DATA.tutor.chatOn)
     html+='<button class="weak-btn" id="goTalk" style="margin-top:14px; background:#EEF0FA; color:var(--purple); border-color:#D6D3EC">💬 '+esc(tutorNamed())+'と英語でおしゃべりする</button>';
+  html+=`<details style="margin-top:18px; font-size:14px"><summary style="color:var(--ink-soft); font-weight:700; cursor:pointer">❓ つかいかた</summary>
+    <div style="line-height:1.8; padding:8px 4px; color:var(--ink)">
+    <b>🏠 ホーム</b>:先生からの宿題があると「今日のやること」が出るよ。タップですぐ始まる。<br>
+    <b>💬 トーク</b>:「会話」は英語で話すと直して質問してくれる。「作文添削」は英作文を貼るか📷で写真。英語の行はタップで読み上げ、🎤で声で入力。<br>
+    <b>🎤 スピーク</b>:教材を開いて、聞く→音読(文をタップでマイク)→くらべ聞き→ロールプレイ→シャドーイング。「読み方」でカタカナ/発音記号が出せる。<br>
+    <b>✏️ ドリル</b>:問題と単語。まちがえた問題は🔴になって、また出やすくなる。<br>
+    <b>📌 宿題</b>:締切の近い順。終わると「提出済み」になる。テストは1回だけ。
+    </div></details>`;
   el.innerHTML=html;
   const mb=el.querySelector('#missionBtn');
   if(mb) mb.onclick=()=>{ const m=missionOf(); if(m) m.run(); };
@@ -1341,6 +1407,11 @@ function missionOf(){
     .sort((a,b)=>String(a.due).localeCompare(String(b.due)))[0];
   if(hw) return {label:'📌 宿題', title:hw.task, sub:(hw.due?'締切 '+hw.due+' ・ ':'')+hw.type,
     run:()=>startHomework(hw)};
+  return null; // 先生からの宿題がないときは「今日のやること」を出さない
+}
+function missionOf_auto(){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const hw=null;
   const wq=qWeakPool();
   if(wq.length>=3) return {label:'🔁 復習', title:'にがて問題 '+wq.length+'問',
     sub:'まちがえた問題を重点れんしゅう', run:()=>startQDrill(null,true,null)};
@@ -2322,6 +2393,9 @@ const PRON={
 let rbMode=lsGet('eig_rb')||'none';
 function pronOf(word){
   const k=norm(word).replace(/'s$/,'').replace(/'/g,'');
+  const kk=norm(word);
+  const P=(DATA.pron||[]).find(x=>x.en.toLowerCase()===k||x.en.toLowerCase()===kk);
+  if(P&&(P.kana||P.ipa)) return [P.kana||'', P.ipa||''];
   // 単語帳シートの読み情報が優先(cards[].kana / cards[].ipa)
   const c=(DATA.cards||[]).find(x=>norm(x.en)===k && (x.kana||x.ipa));
   if(c) return [c.kana||'', c.ipa||''];
@@ -2836,6 +2910,7 @@ const SCHEMA={
   '単語帳':[['英語'],['意味'],['種別','sel'],['レベル','sel'],['例文(並べかえに使用・任意)','ta'],['セット名','sel'],['読み・カタカナ(任意)'],['発音記号(任意)']],
   '宿題':[['課題名'],['タイプ','sel'],['対象','sel'],['締切','sel'],['メモ(テスト=「10分」等で制限時間 /「順番どおり」で出題順固定)']],
   '名簿':[['クラス(例 1-2)'],['出席番号'],['名前'],['PIN(任意・なりすまし防止)']],
+  '発音':[['英語'],['カタカナ'],['発音記号'],['意味(任意)']],
   '問題集':[['問題文(穴埋めは ___ を入れる/整序は日本語)','ta'],['選択肢A(4択のみ)'],['選択肢B'],['選択肢C'],['選択肢D'],['正解(4択=正解の選択肢と同じ文字列)'],['解説','ta'],['形式','sel'],['ジャンル','sel'],['セット名','sel']]
 };
 /* 選択式フィールドの選択肢(スプレッドシートの内容から自動生成) */
@@ -2886,6 +2961,7 @@ function tData_(){
   if(tSheet==='教材') return DATA.passages.map(p=>({id:p.id, v:[p.title,p.level,p.category,p.text,p.translation,p.link||'']}));
   if(tSheet==='単語帳') return DATA.cards.map(c=>({id:c.id, v:[c.en,c.ja,c.kind,c.level,c.ex,c.set,c.kana||'',c.ipa||'']}));
   if(tSheet==='名簿') return DATA.roster.map((r,i)=>({id:i, v:[r.cls,r.num,r.name,'']}));
+  if(tSheet==='発音') return (DATA.pron||[]).filter(p=>p.en).map(p=>({id:p.id, v:[p.en,p.kana,p.ipa,p.ja||'']}));
   if(tSheet==='問題集') return (DATA.questions||[]).map(q=>{
     const a=q.a||[];
     return {id:q.id, v:[q.q, a[0]||'', a[1]||'', a[2]||'', a[3]||'', q.ans, q.exp, q.fmt, q.genre, q.set]};
@@ -2894,7 +2970,7 @@ function tData_(){
 }
 function renderTeacher(){
   const el=$('pane-teacher');
-  const tabs=['ダッシュボード','生徒一覧','教材','単語帳','宿題','問題集','名簿','⚙設定'];
+  const tabs=['ダッシュボード','生徒一覧','教材','単語帳','宿題','問題集','名簿','発音','⚙設定'];
   let html='<div class="chips">'+tabs.map(s=>`<button class="chip ${s===tSheet?'on':''}" data-s="${s}">${s}</button>`).join('')
     +'<button class="chip" id="openStudent">🔗 生徒画面</button></div>';
   if(tSheet==='ダッシュボード'){
@@ -2973,6 +3049,16 @@ function wireTeacher(el){
   };
   const sv=el.querySelector('#stSave');
   if(sv) sv.onclick=saveSettingsUI;
+  const gp=el.querySelector('#stGenPron');
+  if(gp) gp.onclick=()=>{
+    gp.disabled=true; gp.textContent='生成中…(数十秒かかります)';
+    apiPost({action:'genpron', key:TKEY}, (ok,err,r)=>{
+      gp.disabled=false; gp.textContent='🔤 読み方を自動生成(発音シートへ)';
+      if(ok) toast('✓ '+((r&&r.added)||0)+'語を発音シートに追加'+((r&&r.remaining)?'(残り約'+r.remaining+'語:もう一度押すと続きを生成)':''),5000);
+      else toast(err||'生成に失敗しました',4000);
+      if(ok) load();
+    });
+  };
   const tt=el.querySelector('#stTest');
   if(tt) tt.onclick=()=>{
     tt.disabled=true; tt.textContent='テスト中…';
@@ -3182,6 +3268,14 @@ function renderStudent(name, recs){
         }).join('')
       : '<div class="followline" style="color:var(--ink-soft)">にがて問題はありません(または未学習)</div>';
   }catch(e){}
+  // トーク履歴
+  const tk=((DATA.talkAll||{})[name]||[]);
+  html+='<div class="dash-sec">💬 AIトーク履歴(直近'+tk.length+'件)</div>';
+  html+=tk.length
+    ? '<div class="chat-box" style="max-height:360px; overflow:auto; border:1px solid var(--line); border-radius:12px; padding:10px">'
+      +tk.map(t=>`<div class="cmsg ${t.role==='AI'?'ai':'me'}" style="font-size:13.5px; max-width:92%"><span style="font-size:11px; opacity:.7">${esc(t.time)} ${esc(t.mode)}</span><br>${esc(t.content).slice(0,600)}${t.content.length>600?'…':''}</div>`).join('')
+      +'</div>'
+    : '<div class="followline" style="color:var(--ink-soft)">トークの記録はありません</div>';
   // 提出履歴
   html+='<div class="dash-sec">📄 提出履歴</div>';
   html+=my.slice().reverse().map(r=>{
@@ -3207,12 +3301,19 @@ function renderSettings(){
     </select></div>
   <div class="field"><label>モデル</label>
     <select id="st_model" style="width:100%; font-size:16px; padding:10px 12px; border:1.5px solid var(--line); border-radius:10px; background:var(--paper)">
-      ${['gpt-4o-mini','gpt-4.1-mini','gpt-4o'].map(m=>`<option ${s.model===m?'selected':''}>${m}</option>`).join('')}
+      ${['gpt-5.4-nano','gpt-5.4-mini','gpt-4o-mini'].map(m=>`<option ${s.model===m?'selected':''}>${m}</option>`).join('')}
     </select></div>
   <div class="field"><label>OpenAI APIキー ${s.keySet?'<span style="color:var(--ok)">✓ 設定済み</span>':'<span style="color:var(--miss)">未設定</span>'}</label>
     <input id="st_key" type="password" placeholder="${s.keySet?'変更する場合のみ入力(空欄なら現在のキーを保持)':'sk- からはじまるキーを貼り付け'}"></div>
-  <div class="field"><label>チャットプロンプト(AIの人格・ルール。通報ルールを消さないこと)</label>
-    <textarea id="st_prompt" style="min-height:200px; font-size:13px">${esc(s.prompt)}</textarea></div>
+  <div class="field"><label>Day1 会話プロンプト(英会話講師。通報ルールを消さないこと)</label>
+    <textarea id="st_prompt" style="min-height:180px; font-size:13px">${esc(s.prompt)}</textarea></div>
+  <div class="field"><label>Day2 作文添削プロンプト(英作文の添削者)</label>
+    <textarea id="st_prompt2" style="min-height:180px; font-size:13px">${esc(s.prompt2||'')}</textarea></div>
+  <p class="thelp">Day3(自由な対話)は生徒画面から ChatGPT へのリンクで開きます(記録なし)。</p>
+  <div class="dash-sec">🔤 読み方(カタカナ・発音記号)の自動生成</div>
+  <p class="thelp">教材と単語帳に出てくる単語のうち未登録のものを、AIがカタカナ読み・発音記号・意味に変換して「発音」シートに保存します。生徒の本文画面の「読み方」表示に使われます(1回で最大約1,400語)。</p>
+  <button class="ghost" id="stGenPron" style="width:100%">🔤 読み方を自動生成(発音シートへ)</button>
+  <p class="thelp">📖 くわしい使い方はスプレッドシートの「使い方」シート(教員/生徒 別)にまとまっています。</p>
   <div class="dash-sec">🔑 教員パスコード</div>
   <div class="field"><label>新しいパスコード(変更する場合のみ。変更後はURLの ?t= も変わります)</label>
     <input id="st_pass" placeholder="例: sensei2026"></div>
@@ -3227,7 +3328,8 @@ function saveSettingsUI(){
     'チャット機能': $('st_chat').value,
     'チャットモデル': $('st_model').value,
     'OpenAI APIキー': $('st_key').value.trim(),
-    'チャットプロンプト': $('st_prompt').value
+    'チャットプロンプト': $('st_prompt').value,
+    'ライティングプロンプト': $('st_prompt2').value
   };
   const np=$('st_pass').value.trim();
   if(np) items['教員パスコード']=np;
