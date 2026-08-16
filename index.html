@@ -144,11 +144,20 @@
   .inst-status.rec{color:var(--miss)}
 
   /* ---- 本文(音読) ---- */
-  .sheet{padding:10px 18px 240px; max-width:760px; margin:0 auto}
+  .sheet{padding:10px 18px 52vh; max-width:760px; margin:0 auto}
   .hint{font-size:13px; color:var(--ink-soft); padding:10px 2px 14px}
   .qr-link{display:inline-flex; align-items:center; gap:6px; margin:0 0 12px;
     padding:10px 16px; border-radius:12px; background:#EAF1FB; color:#2B5FA8;
     font-size:14px; font-weight:700; border:1.5px solid #C9DCF5; text-decoration:none}
+  /* 読み方ルビ(カタカナ/発音記号) */
+  .sent .en .w{position:relative; display:inline-block; padding-top:0}
+  .rb-on .sent .en .w{padding-top:15px}
+  .sent .en .w .rb{position:absolute; top:0; left:0; right:0; text-align:center; font-size:10.5px; line-height:1;
+    color:var(--purple); font-weight:600; white-space:nowrap; display:none; letter-spacing:0; font-family:var(--ui)}
+  .rb-on .sent .en .w .rb{display:block}
+  .sent .en .w .rb.ipa{color:#2B5FA8; font-family:'Segoe UI','Arial Unicode MS',var(--ui)}
+  .rb-ctl{display:flex; gap:6px; align-items:center; margin:0 0 10px; flex-wrap:wrap}
+  .rb-ctl .chip{padding:8px 12px; font-size:13px}
   /* マスク表示(暗唱練習) */
   .sent .en .w.mask{background:#D8DEDA; color:transparent; border-radius:6px; text-decoration:none !important}
   .sent .en .w.mask:active{background:var(--teal-soft)}
@@ -325,6 +334,8 @@
   .cmsg.ai .spkbtn{display:inline-flex; margin-top:6px; padding:4px 12px; border-radius:999px;
     background:var(--teal-soft); color:var(--teal); font-size:13px; font-weight:700}
   .cmsg.typing{color:var(--ink-soft); font-style:italic}
+  .cmsg.ai .sline{display:inline; cursor:pointer; border-bottom:1.5px dashed var(--teal); color:var(--ink)}
+  .cmsg.ai .sline:active{background:var(--teal-soft)}
   .chat-input{position:fixed; left:0; right:0; bottom:calc(64px + env(safe-area-inset-bottom)); z-index:39;
     background:rgba(255,255,255,.97); border-top:1px solid var(--line); padding:8px 12px; display:none; gap:8px; align-items:flex-end}
   .chat-input.on{display:flex}
@@ -487,6 +498,12 @@
   </header>
   <div class="sheet">
     <p class="hint" id="hint"></p>
+    <div class="rb-ctl">
+      <span style="font-size:12.5px; color:var(--ink-soft); font-weight:700">読み方:</span>
+      <button class="chip" id="rbNone">なし</button>
+      <button class="chip" id="rbKana">カタカナ</button>
+      <button class="chip" id="rbIpa">発音記号</button>
+    </div>
     <div id="heardAll"></div>
     <div id="sents"></div>
   </div>
@@ -680,6 +697,10 @@
     <div class="chips" id="hwTarget" style="max-height:150px; overflow:auto"></div>
     <div class="dash-sec">③ 締切</div>
     <div class="chips" id="hwDue"></div>
+    <div id="hwOrderRow" style="display:none">
+      <div class="dash-sec">出題順</div>
+      <div class="chips" id="hwOrder"></div>
+    </div>
     <div id="hwTimeRow" style="display:none">
       <div class="dash-sec">④ 制限時間(テスト)</div>
       <div class="chips" id="hwTime"></div>
@@ -710,6 +731,7 @@
       <button class="big" id="inNg" style="background:var(--miss)">🔁 まだ</button>
     </div>
     <div class="sub-row">
+      <button class="ghost" id="inHint" style="flex:1">💡 ヒント(さいしょの2語)</button>
       <button class="ghost" id="inPass" style="flex:1">パス(答えを見る)</button>
       <button class="big" id="inNext" style="display:none">つぎへ ›</button>
     </div>
@@ -737,11 +759,17 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================================================
+ *  ★★ 設定(ここだけ変えればOK)★★
+ *  GAS_URL : GAS「ウェブアプリ」のデプロイURL(…/exec で終わるもの)
+ *            新しくデプロイし直したら、ここを新しいURLに貼り替える
+ * ============================================================ */
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwpdfV2mSY7Fev7uLxMSJ3qOJ6i9cJShgMOU93WozPqVhS46kuRzUYtsNAbD2wtvwLBvA/exec';
+
 (function(){
 'use strict';
 
 /* ★外部ホスティング(GitHub Pages等)で使う場合、GASのウェブアプリURLを設定★ */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwpdfV2mSY7Fev7uLxMSJ3qOJ6i9cJShgMOU93WozPqVhS46kuRzUYtsNAbD2wtvwLBvA/exec';
 
 /* ================= 共通 ================= */
 const $ = id => document.getElementById(id);
@@ -863,11 +891,12 @@ function pickVoice(){
 }
 pickVoice();
 if(synth.onvoiceschanged !== undefined) synth.onvoiceschanged = pickVoice;
+function SPD(){ return parseFloat(lsGet('eig_spd')||'0.9'); }
 function speak(text, onend, rate){
   synth.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang='en-US'; if(voice) u.voice=voice;
-  u.rate = rate || parseFloat($('rate').value) || 0.9;
+  u.rate = rate || SPD();
   u.onend = ()=>{ if(onend) onend(); };
   u.onerror = ()=>{ if(onend) onend(); };
   synth.speak(u);
@@ -1013,6 +1042,7 @@ function setTab(t){
   $('pane-'+t).classList.add('on');
   $('chatInput').classList.toggle('on', t==='talk');
   if(t==='talk') setTimeout(()=>{ const b=$('chatBox'); if(b) b.scrollTop=b.scrollHeight; },50);
+  if(!TKEY && DATA.passages) tutorScene('tab_'+t);
   window.scrollTo(0,0);
 }
 document.querySelectorAll('#navBar button').forEach(b=>{ b.onclick=()=>setTab(b.dataset.t); });
@@ -1022,6 +1052,42 @@ function tutorSay(text, mood){
   const av=$('tutorAv');
   av.className='tutor-avatar tm-'+(mood||'normal');
   $('tutorMsg').textContent=text;
+}
+/* セリフ集:スプレッドシート「セリフ」から読み込み。なければ内蔵版 */
+let LINES={};
+function loadLines(){
+  LINES={};
+  (DATA.lines||[]).forEach(l=>{ if(l.scene&&l.text) (LINES[l.scene]=LINES[l.scene]||[]).push(l); });
+}
+const FB={
+  greet:[['こんにちは、{name}!今日はどれからやる?','happy']],
+  greet_mission:[['{name}、おかえり!今日は「{mission}」からやってみよう!','happy']],
+  tab_home:[['ホームだよ。ミッションからはじめるのがおすすめ!','normal']],
+  tab_talk:[['英語でおしゃべりしよう。まちがえても大丈夫、直してあげる!','happy']],
+  tab_read:[['スピークの時間!声に出すのがいちばんの近道だよ','happy']],
+  tab_drill:[['ドリルでにがてをつぶそう。まちがえた問題ほど出やすくしてあるよ','normal']],
+  tab_hw:[['宿題のページだよ。締切をチェックしてね','normal']],
+  result_high:[['{pct}%!すごい、その調子!','cheer']],
+  result_mid:[['{pct}%、いいね!見なおせばもっと伸びるよ','happy']],
+  result_low:[['{pct}%か…大丈夫、くり返せば必ずできる!','think']],
+  submit_ok:[['提出できたよ。おつかれさま!','happy']],
+  talk_reply:[['英語の行はタップすると読み上げるよ','normal']],
+  test_start:[['テストだよ。おちついて、じっくりね','think']],
+  login:[['{name}、はじめよう!','happy']]
+};
+function tutorScene(scene, vars){
+  const arr=(LINES[scene]&&LINES[scene].length)?LINES[scene]:(FB[scene]||[]).map(x=>({text:x[0],mood:x[1]}));
+  if(!arr.length) return;
+  const l=arr[Math.floor(Math.random()*arr.length)];
+  const m=missionOf();
+  const v=Object.assign({
+    name:(NAME||'きみ').replace(/^.*\s/,''),
+    tutor:tutorNamed(),
+    streak:streakDays(),
+    mission:m?m.title:''
+  }, vars||{});
+  let t=String(l.text).replace(/\{(\w+)\}/g,(mm,k)=>v[k]!=null?String(v[k]):'');
+  tutorSay(t, l.mood||'normal');
 }
 function tutorNamed(){ return (DATA.tutor&&DATA.tutor.name)||'ピコ'; }
 function streakDays(){
@@ -1035,23 +1101,18 @@ function streakDays(){
 }
 function tutorGreet(){
   $('tutorName').textContent=tutorNamed();
-  const m=missionOf();
-  const st=streakDays();
-  const nm=NAME?NAME.replace(/^.*\s/,''):'';
-  if(m) tutorSay((nm?nm+'、':'')+'こんにちは!今日は「'+m.title+'」からやってみよう!'+(st>=2?' 🔥'+st+'日連続!':''), 'happy');
-  else tutorSay((nm?nm+'、':'')+'こんにちは!好きな練習からはじめよう!', 'happy');
+  loadLines();
+  tutorScene(missionOf()?'greet_mission':'greet');
 }
 function tutorScoreComment(pct, type){
-  if(pct>=90) tutorSay('すごい!'+pct+'%!この調子だよ🎉', 'cheer');
-  else if(pct>=70) tutorSay(pct+'%、いいね!まちがえたところを見なおすともっと伸びるよ', 'happy');
-  else tutorSay(pct+'%か…だいじょうぶ、くり返せば必ずできるようになるよ。もう一回いってみよう!', 'think');
+  tutorScene(pct>=90?'result_high':pct>=70?'result_mid':'result_low', {pct:pct});
 }
 
 /* ================= AIトーク(ChatGPT中継) ================= */
 let TALK=[], talkBusy=false;
 function talkSeed(){
   if(TALK.length) return;
-  TALK.push({role:'assistant', content:'Hi'+(NAME?', '+esc(NAME).replace(/^.*\s/,''):'')+'! 😊\nWhat do you want to talk about?\n(何について話したい?じこしょうかいからでもいいよ)'});
+  TALK.push({role:'assistant', content:'Hi'+(NAME?', '+NAME.replace(/^.*\s/,''):'')+'!\nWhat do you want to talk about?\n(何について話したい? じこしょうかいからでもいいよ。英語の行はタップすると読み上げるよ)'});
 }
 function engLines(text){
   // 英語の行だけ抽出して読み上げ用に返す
@@ -1061,6 +1122,10 @@ function engLines(text){
       return letters>=4 && letters/Math.max(1,l.replace(/\s/g,'').length)>0.6;
     })
     .map(l=>l.replace(/^[★*\-•\d.)\s]+/,'')).join(' ');
+}
+function isEnLine(l){
+  const letters=(l.match(/[A-Za-z]/g)||[]).length;
+  return letters>=4 && letters/Math.max(1,l.replace(/\s/g,'').length)>0.6;
 }
 function renderTalk(){
   const el=$('pane-talk');
@@ -1072,14 +1137,24 @@ function renderTalk(){
   talkSeed();
   let html='<div class="chat-box" id="chatBox">';
   TALK.forEach((m,i)=>{
-    if(m.role==='user') html+=`<div class="cmsg me">${esc(m.content)}</div>`;
-    else html+=`<div class="cmsg ai">${esc(m.content)}${engLines(m.content)?`<br><button class="spkbtn" data-i="${i}">🔊 きく</button>`:''}</div>`;
+    if(m.role==='user'){ html+=`<div class="cmsg me">${esc(m.content)}</div>`; return; }
+    // 英語の行はタップで1文ずつ読み上げ
+    const body=String(m.content).split(/\n/).map(l=>{
+      const t=l.trim();
+      if(!t) return '';
+      if(isEnLine(t)){
+        const sayText=t.replace(/^[★*\-•\d.)\s]+/,'');
+        return `<span class="sline" data-say="${escA(sayText)}">🔉 ${esc(t)}</span>`;
+      }
+      return esc(t);
+    }).join('<br>');
+    html+=`<div class="cmsg ai">${body}</div>`;
   });
   if(talkBusy) html+='<div class="cmsg ai typing">'+esc(tutorNamed())+'が考えています…</div>';
   html+='</div>';
   el.innerHTML=html;
-  el.querySelectorAll('.spkbtn').forEach(b=>{
-    b.onclick=()=>{ synth.cancel(); speak(engLines(TALK[+b.dataset.i].content), null, 0.92); };
+  el.querySelectorAll('.sline').forEach(b=>{
+    b.onclick=()=>{ synth.cancel(); speak(b.dataset.say, null); };
   });
   const box=$('chatBox');
   if(box && $('pane-talk').classList.contains('on')) box.scrollTop=box.scrollHeight;
@@ -1098,9 +1173,7 @@ function talkSend(){
     if(ok && r && r.reply){
       TALK.push({role:'assistant', content:r.reply});
       renderTalk();
-      const en=engLines(r.reply);
-      if(en){ synth.cancel(); speak(en, null, 0.92); }
-      tutorSay('いいね、その調子!英語の部分は🔊で何回でも聞けるよ', 'happy');
+      tutorScene('talk_reply');
     }else{
       TALK.push({role:'assistant', content:'⚠ '+(err||'通信に失敗しました。もう一度ためしてね')});
       renderTalk();
@@ -1169,8 +1242,8 @@ function renderQ(){
   const wq=qWeakPool();
   let html='';
   if(wq.length) html+=`<button class="weak-btn" id="qWeakGo">🔁 にがて問題を重点れんしゅう(${wq.length}問)</button>`;
-  if(DATA.passages.some(p=>p.translation))
-    html+=`<button class="weak-btn" id="qInstGo" style="background:#EEF0FA; color:var(--purple); border-color:#D6D3EC">⚡ 瞬間英作文(6秒で言えるかチャレンジ)</button>`;
+  if(DATA.passages.some(p=>p.translation)||DATA.questions.some(q=>q.fmt==='瞬間英作文'))
+    html+=`<button class="weak-btn" id="qInstGo" style="background:#EEF0FA; color:var(--purple); border-color:#D6D3EC">⚡ 瞬間英作文(10秒で言えるかチャレンジ)</button>`;
   const sets=[...new Set(DATA.questions.map(q=>q.set))];
   html+='<div class="cards-grid">'+sets.map(s=>{
     const qs=DATA.questions.filter(q=>q.set===s);
@@ -1199,11 +1272,20 @@ function renderQ(){
   const ig=el.querySelector('#qInstGo');
   if(ig) ig.onclick=()=>{
     currentTask=null;
+    const qs=DATA.questions.filter(q=>q.fmt==='瞬間英作文');
+    if(qs.length){ startInstant(qs.map(q=>({ja:q.q,en:q.ans})), '瞬間英作文', null); return; }
     const items=[];
     DATA.passages.forEach(p=>{ if(p.translation) items.push(...instItemsFromPassage(p)); });
     startInstant(items, '全教材から', null);
   };
-  el.querySelectorAll('.qs').forEach(b=>b.onclick=()=>{ currentTask=null; startQDrill(b.dataset.s,false,null); });
+  el.querySelectorAll('.qs').forEach(b=>b.onclick=()=>{
+    currentTask=null;
+    const s=b.dataset.s;
+    const inst=DATA.questions.filter(q=>q.set===s&&q.fmt==='瞬間英作文');
+    const normal=DATA.questions.filter(q=>q.set===s&&q.fmt!=='瞬間英作文');
+    if(inst.length&&!normal.length) startInstant(inst.map(q=>({ja:q.q,en:q.ans})), s, null);
+    else startQDrill(s,false,null,null);
+  });
 }
 
 /* ================= 習熟箱(間違えたところを重点的に) ================= */
@@ -1374,8 +1456,10 @@ function startHomework(h){
     const mm=(String(h.memo||'').match(/(\d+)\s*分/)||[])[1];
     startQDrill(h.target, false, h, {test:true, minutes:mm?+mm:10});
   }else if(h.type==='瞬間英作文'){
+    const qs=DATA.questions.filter(q=>q.set===h.target&&q.fmt==='瞬間英作文');
+    if(qs.length){ startInstant(qs.map(q=>({ja:q.q,en:q.ans})), h.target, h); return; }
     const p=DATA.passages.find(p=>p.title===h.target);
-    if(!p){ toast('教材「'+h.target+'」が見つかりません(先生に確認してね)'); currentTask=null; return; }
+    if(!p){ toast('対象「'+h.target+'」が見つかりません(先生に確認してね)'); currentTask=null; return; }
     startInstant(instItemsFromPassage(p), p.title, h);
   }else if(h.type==='ディクテーション'){
     const cs=DATA.cards.filter(c=>c.set===h.target && c.ex && c.ex.split(/\s+/).length>=3);
@@ -1404,10 +1488,13 @@ function startQDrill(setName, weakOnly, task, opts){
     if(wp.length) pool=wp;
   }
   if(!pool.length){ toast('問題がありません'); currentTask=null; return; }
+  pool=pool.filter(q=>q.fmt!=='瞬間英作文');
+  if(!pool.length){ toast('このセットは瞬間英作文用です'); currentTask=null; return; }
   QD.test=!!(opts&&opts.test);
+  const seq = currentTask && /順番/.test(String(currentTask.memo||''));
   if(QD.timerId){ clearInterval(QD.timerId); QD.timerId=null; }
   if(QD.test){
-    QD.list=shuffle(pool).slice(0,20);
+    QD.list=(seq?pool.slice():shuffle(pool)).slice(0,20);
     const min=(opts&&opts.minutes)||10;
     QD.deadline=Date.now()+min*60000;
     QD.timerId=setInterval(qdTick,1000);
@@ -1415,7 +1502,7 @@ function startQDrill(setName, weakOnly, task, opts){
     qdTick();
     toast('📝 テスト開始!制限時間 '+min+'分・解説は終了後に表示・受験は1回だけ',3500);
   }else{
-    QD.list=pickWeighted(pool, Math.min(10, pool.length));
+    QD.list=seq?pool.slice(0,10):pickWeighted(pool, Math.min(10, pool.length));
     $('qdTimer').style.display='none';
   }
   QD.idx=0; QD.good=0; QD.wrong=[]; QD.params={setName, weakOnly, task: currentTask, test:QD.test};
@@ -1531,14 +1618,21 @@ $('qdCheck').onclick=()=>{
   }
   qdAnswered(right);
 };
+function qSentence(q){
+  // 問題文+答えから読み上げ用の完全な英文を作る(日本語ヒントは除去)
+  let t = q.fmt==='整序' ? q.ans : (/_{2,}/.test(q.q) ? q.q.replace(/_{2,}/, q.ans) : q.ans);
+  t = t.replace(/（[^）]*）|\([^)]*\)/g, ' ');
+  t = t.replace(/[^\x00-\x7F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t || q.ans;
+}
 function qdAnswered(right){
   QD.answered=true;
   const q=QD.cur;
   mastMark(q, right);
   if(right) QD.good++; else QD.wrong.push(q);
-  if(!QD.test && /^[A-Za-z]/.test(q.ans)) speak(q.ans, null, 0.95);
+  if(!QD.test && /[A-Za-z]/.test(q.ans)) speak(qSentence(q), null);
   $('qdExpT').textContent = right ? '⭕ せいかい!' : '❌ ざんねん…';
-  $('qdExpA').textContent = QD.test ? '' : '答え: '+q.ans;
+  $('qdExpA').textContent = QD.test ? '' : '答え: '+q.ans+(qSentence(q)!==q.ans?'  →  '+qSentence(q):'');
   $('qdExpB').textContent = QD.test ? '(答えと解説はテスト終了後にまとめて表示されます)' : (q.exp ? '💡 '+q.exp : '');
   $('qdExp').classList.add('show');
   $('qdCheck').style.display='none';
@@ -1653,8 +1747,9 @@ function drawInst(){
   $('inSelfRow').style.display='none';
   $('inNext').style.display='none'; $('inPass').style.display='block';
   $('inStatus').className='inst-status';
-  $('inStatus').textContent='6秒で英語にしよう…';
-  const t0=Date.now(), thinkMs=6000;
+  $('inStatus').textContent='10秒で英語にしよう…';
+  $('inHint').style.display='block'; $('inHint').disabled=false;
+  const t0=Date.now(), thinkMs=10000;
   $('inCd').style.width='100%';
   IN.timer=setInterval(()=>{
     if(!$('instView').classList.contains('on')){ inClearTimer(); return; }
@@ -1697,7 +1792,7 @@ function instJudge(spokenText, durMs){
   const T=spokenTokens(it.en), S=spokenTokens(spokenText||'');
   const hit=lcsHit(T,S);
   const pct=T.length?Math.round(hit.filter(Boolean).length/T.length*100):0;
-  const right=pct>=70;
+  const right=pct>=65;
   IN.answered=true;
   if(right) IN.good++; else IN.wrong.push(it);
   instReveal(spokenText, pct, right);
@@ -1716,6 +1811,12 @@ function instReveal(spokenText, pct, right){
   $('inPass').style.display='none';
   if(right!=null){ $('inNext').style.display='block'; }
 }
+$('inHint').onclick=()=>{
+  if(IN.answered) return;
+  const it=IN.list[IN.idx];
+  $('inStatus').textContent='💡 '+it.en.split(/\s+/).slice(0,2).join(' ')+' …';
+  $('inHint').disabled=true;
+};
 $('inPass').onclick=()=>{
   if(IN.answered) return;
   inClearTimer(); stopAutoRec();
@@ -1728,25 +1829,32 @@ $('inNg').onclick=()=>{ IN.wrong.push(IN.list[IN.idx]); IN.idx++; drawInst(); };
 $('inNext').onclick=()=>{ IN.idx++; drawInst(); };
 
 /* ================= かんたん宿題作成 ================= */
-const HWZ={type:'', target:'', due:'', min:'10'};
+const HWZ={type:'', target:'', due:'', min:'10', order:'ランダム'};
 const HWTYPES=[
   {t:'音読', src:'passage'}, {t:'瞬間英作文', src:'passage'}, {t:'ディクテーション', src:'both'},
   {t:'問題', src:'qset'}, {t:'テスト', src:'qset'},
   {t:'4択', src:'cset'}, {t:'カード', src:'cset'}, {t:'スペル', src:'cset'}, {t:'並べかえ', src:'cset'}
 ];
 function openHwWizard(){
-  HWZ.type=''; HWZ.target=''; HWZ.due=''; HWZ.min='10';
+  HWZ.type=''; HWZ.target=''; HWZ.due=''; HWZ.min='10'; HWZ.order='ランダム';
   $('hwType').innerHTML=HWTYPES.map(x=>`<button class="chip" data-t="${x.t}">${x.t}</button>`).join('');
   $('hwTarget').innerHTML='<span class="thelp">まず種類をえらんでください</span>';
   const opts=[['明日',1],['3日後',3],['1週間後',7],['2週間後',14]];
   $('hwDue').innerHTML=opts.map(o=>`<button class="chip" data-d="${o[1]}">${o[0]}</button>`).join('');
   $('hwTime').innerHTML=[5,10,15,20].map(n=>`<button class="chip ${n===10?'on':''}" data-m="${n}">${n}分</button>`).join('');
-  $('hwTimeRow').style.display='none';
+  $('hwOrder').innerHTML=['ランダム','順番どおり'].map(o=>`<button class="chip ${o==='ランダム'?'on':''}" data-o="${o}">${o}</button>`).join('');
+  $('hwOrder').querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+    HWZ.order=c.dataset.o;
+    $('hwOrder').querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));
+    hwzPreview();
+  });
+  $('hwTimeRow').style.display='none'; $('hwOrderRow').style.display='none';
   $('hwPreview').textContent=''; $('hwCreate').disabled=true;
   $('hwType').querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
     HWZ.type=c.dataset.t; HWZ.target='';
     $('hwType').querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));
     $('hwTimeRow').style.display = HWZ.type==='テスト'?'block':'none';
+    $('hwOrderRow').style.display = (HWZ.type==='問題'||HWZ.type==='テスト')?'block':'none';
     hwzTargets(); hwzPreview();
   });
   $('hwDue').querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
@@ -1769,6 +1877,8 @@ function hwzTargets(){
   else if(def.src==='qset') list=[...new Set((DATA.questions||[]).map(q=>q.set))];
   else if(def.src==='cset') list=[...new Set(DATA.cards.map(c=>c.set))];
   else list=[...new Set(DATA.cards.filter(c=>c.ex).map(c=>c.set)), ...DATA.passages.map(p=>p.title)];
+  if(HWZ.type==='瞬間英作文')
+    list=[...new Set(DATA.questions.filter(q=>q.fmt==='瞬間英作文').map(q=>q.set)), ...DATA.passages.filter(p=>p.translation).map(p=>p.title)];
   $('hwTarget').innerHTML = list.length
     ? list.map(t=>`<button class="chip" data-g="${escA(t)}">${esc(t)}</button>`).join('')
     : '<span class="thelp">この種類に使える対象がありません</span>';
@@ -1782,12 +1892,13 @@ function hwzPreview(){
   const ok=HWZ.type&&HWZ.target&&HWZ.due;
   $('hwCreate').disabled=!ok;
   $('hwPreview').textContent = ok
-    ? `作成内容:「${HWZ.target} ${HWZ.type}」/ 締切 ${HWZ.due}`+(HWZ.type==='テスト'?` / ${HWZ.min}分・1回のみ`:'')
+    ? `作成内容:「${HWZ.target} ${HWZ.type}」/ 締切 ${HWZ.due}`+(HWZ.type==='テスト'?` / ${HWZ.min}分・1回のみ`:'')+((HWZ.type==='問題'||HWZ.type==='テスト')&&HWZ.order==='順番どおり'?' / 順番どおり':'')
     : '';
 }
 $('hwCancel').onclick=()=>$('hwOvl').classList.remove('on');
 $('hwCreate').onclick=()=>{
-  const memo=HWZ.type==='テスト' ? HWZ.min+'分・受験1回' : '';
+  let memo=HWZ.type==='テスト' ? HWZ.min+'分・受験1回' : '';
+  if((HWZ.type==='問題'||HWZ.type==='テスト')&&HWZ.order==='順番どおり') memo+=(memo?'・':'')+'順番どおり';
   $('hwCreate').disabled=true;
   apiPost({action:'teacher', key:TKEY, sheet:'宿題', row:-1,
     values:[HWZ.target+' '+HWZ.type, HWZ.type, HWZ.target, HWZ.due, memo]}, (ok,err)=>{
@@ -2053,7 +2164,8 @@ function showResult(pct, msg, wrongs, type, target, detail){
   save(type, target, pct, detail, ok=>{
     $('resSaved').textContent = ok
       ? (currentTask ? '✓ 宿題「'+currentTask.task+'」を提出しました' : '✓ 記録しました')
-      : '';
+      : '⚠ 記録を送信できませんでした。電波を確認して「もう一度」でやり直してね';
+    if(!ok) $('resSaved').style.color='var(--miss)'; else $('resSaved').style.color='';
   });
   renderWord(); renderQ();
 }
@@ -2085,6 +2197,7 @@ let shOn=false, shMic=true, shIdx=0;
 let autoRecObj=null;
 
 function openPassage(p, task){
+  $('rate').value=String(SPD()); $('rateVal').textContent=SPD().toFixed(1)+'x';
   curP=p; currentTask=task||null; oralScores={}; oralWpm={};
   Object.values(cbRecs).forEach(u=>{ try{URL.revokeObjectURL(u);}catch(e){} });
   cbRecs={}; cbIdx=-1;
@@ -2097,7 +2210,7 @@ function openPassage(p, task){
   $('sents').innerHTML=linkHtml+sents.map((s,i)=>`
     <div class="sent" data-i="${i}">
       ${s.spk?`<span class="spk">${esc(s.spk)}</span>`:''}
-      <p class="en">${s.words.map((w,j)=>`<span class="w" data-j="${j}">${esc(w)}</span>`).join(' ')}</p>
+      <p class="en">${s.words.map((w,j)=>`<span class="w" data-j="${j}"><span class="rb"></span>${esc(w)}</span>`).join(' ')}</p>
       <button class="play1">▶</button>
       <p class="score"></p><p class="heard"></p><p class="jp">${esc(s.jp)}</p>
     </div>`).join('');
@@ -2115,6 +2228,7 @@ function openPassage(p, task){
     el.onclick=()=>{ if(mode==='read') pick(i); else if(mode==='cb') cbPick(i); else if(mode==='listen') playOne(i); };
   });
   applyMask();
+  applyRuby();
   $('submitRow').style.display=currentTask?'flex':'none';
   $('audioRow').style.display=currentTask?'flex':'none';
   // ロールプレイタブは話者がいる教材のみ
@@ -2163,8 +2277,76 @@ function stopEverything(){ stopAll(); stopRec(); stopSeq(); if(typeof cbStop==='
 $('playBtn').onclick=()=>{ playing?stopAll():playAll(); };
 $('repBtn').onclick=()=>{ repeatOn=!repeatOn; $('repBtn').classList.toggle('on',repeatOn); };
 $('jpBtn').onclick=()=>{ document.body.classList.toggle('show-jp'); $('jpBtn').classList.toggle('on'); };
-$('rate').oninput=()=>{ $('rateVal').textContent=(+$('rate').value).toFixed(1)+'x'; };
+$('rate').oninput=()=>{ $('rateVal').textContent=(+$('rate').value).toFixed(1)+'x'; lsSet('eig_spd', $('rate').value); };
 $('pauseS').oninput=()=>{ $('pauseVal').textContent=(+$('pauseS').value).toFixed(1)+'s'; };
+
+/* ---- 読み方ルビ(カタカナ / 発音記号) ---- */
+/* 内蔵辞書:Book 1頻出語(単語帳シートの「読み(カナ)」「発音記号」列で上書き・追加できる) */
+const PRON={
+  "i":["アイ","aɪ"],"you":["ユー","juː"],"he":["ヒー","hiː"],"she":["シー","ʃiː"],"we":["ウィー","wiː"],"they":["ゼイ","ðeɪ"],"it":["イット","ɪt"],
+  "am":["アム","æm"],"is":["イズ","ɪz"],"are":["アー","ɑːr"],"was":["ワズ","wʌz"],"were":["ワー","wɜːr"],"be":["ビー","biː"],
+  "do":["ドゥー","duː"],"does":["ダズ","dʌz"],"did":["ディッド","dɪd"],"can":["キャン","kæn"],"not":["ノット","nɒt"],
+  "my":["マイ","maɪ"],"your":["ユア","jʊər"],"his":["ヒズ","hɪz"],"her":["ハー","hɜːr"],"our":["アウア","aʊər"],"their":["ゼア","ðeər"],
+  "me":["ミー","miː"],"him":["ヒム","hɪm"],"us":["アス","ʌs"],"them":["ゼム","ðem"],"mine":["マイン","maɪn"],"yours":["ユアズ","jʊərz"],
+  "this":["ディス","ðɪs"],"that":["ザット","ðæt"],"these":["ディーズ","ðiːz"],"those":["ゾウズ","ðoʊz"],"the":["ザ","ðə"],"a":["ア","ə"],"an":["アン","ən"],
+  "what":["ワット","wʌt"],"who":["フー","huː"],"where":["ウェア","weər"],"when":["ウェン","wen"],"why":["ワイ","waɪ"],"how":["ハウ","haʊ"],"which":["ウィッチ","wɪtʃ"],"whose":["フーズ","huːz"],
+  "hi":["ハイ","haɪ"],"hello":["ヘロウ","həˈloʊ"],"yes":["イェス","jes"],"no":["ノウ","noʊ"],"ok":["オウケイ","ˌoʊˈkeɪ"],"please":["プリーズ","pliːz"],"thank":["サンク","θæŋk"],"thanks":["サンクス","θæŋks"],"sorry":["ソーリィ","ˈsɒri"],"bye":["バイ","baɪ"],
+  "nice":["ナイス","naɪs"],"meet":["ミート","miːt"],"name":["ネイム","neɪm"],"too":["トゥー","tuː"],"very":["ヴェリィ","ˈveri"],"good":["グッド","ɡʊd"],"great":["グレイト","ɡreɪt"],"well":["ウェル","wel"],
+  "like":["ライク","laɪk"],"love":["ラヴ","lʌv"],"want":["ウォント","wɒnt"],"have":["ハヴ","hæv"],"has":["ハズ","hæz"],"had":["ハッド","hæd"],"go":["ゴウ","ɡoʊ"],"goes":["ゴウズ","ɡoʊz"],"went":["ウェント","went"],"come":["カム","kʌm"],"see":["スィー","siː"],"look":["ルック","lʊk"],
+  "know":["ノウ","noʊ"],"think":["スィンク","θɪŋk"],"say":["セイ","seɪ"],"speak":["スピーク","spiːk"],"talk":["トーク","tɔːk"],"read":["リード","riːd"],"write":["ライト","raɪt"],"study":["スタディ","ˈstʌdi"],"learn":["ラーン","lɜːrn"],
+  "play":["プレイ","pleɪ"],"watch":["ウォッチ","wɒtʃ"],"listen":["リスン","ˈlɪsn"],"eat":["イート","iːt"],"drink":["ドリンク","drɪŋk"],"make":["メイク","meɪk"],"take":["テイク","teɪk"],"get":["ゲット","ɡet"],"give":["ギヴ","ɡɪv"],"help":["ヘルプ","help"],
+  "walk":["ウォーク","wɔːk"],"run":["ラン","rʌn"],"swim":["スウィム","swɪm"],"dance":["ダンス","dæns"],"sing":["スィング","sɪŋ"],"cook":["クック","kʊk"],"live":["リヴ","lɪv"],"work":["ワーク","wɜːrk"],"practice":["プラクティス","ˈpræktɪs"],"enjoy":["エンジョイ","ɪnˈdʒɔɪ"],
+  "join":["ジョイン","dʒɔɪn"],"use":["ユーズ","juːz"],"need":["ニード","niːd"],"call":["コール","kɔːl"],"wait":["ウェイト","weɪt"],"stay":["ステイ","steɪ"],"visit":["ヴィジット","ˈvɪzɪt"],"travel":["トラヴェル","ˈtrævl"],"buy":["バイ","baɪ"],"sell":["セル","sel"],
+  "from":["フロム","frʌm"],"in":["イン","ɪn"],"on":["オン","ɒn"],"at":["アット","æt"],"to":["トゥ","tuː"],"for":["フォー","fɔːr"],"of":["オヴ","ʌv"],"with":["ウィズ","wɪð"],"by":["バイ","baɪ"],"about":["アバウト","əˈbaʊt"],"under":["アンダー","ˈʌndər"],"near":["ニア","nɪər"],"after":["アフター","ˈæftər"],"before":["ビフォー","bɪˈfɔːr"],
+  "and":["アンド","ænd"],"but":["バット","bʌt"],"or":["オア","ɔːr"],"so":["ソウ","soʊ"],"because":["ビコーズ","bɪˈkɒz"],"if":["イフ","ɪf"],
+  "here":["ヒア","hɪər"],"there":["ゼア","ðeər"],"now":["ナウ","naʊ"],"today":["トゥデイ","təˈdeɪ"],"tomorrow":["トゥモロウ","təˈmɒroʊ"],"yesterday":["イェスタデイ","ˈjestərdeɪ"],"every":["エヴリィ","ˈevri"],"day":["デイ","deɪ"],"week":["ウィーク","wiːk"],"year":["イヤー","jɪər"],"morning":["モーニング","ˈmɔːrnɪŋ"],"night":["ナイト","naɪt"],
+  "school":["スクール","skuːl"],"student":["ステューデント","ˈstuːdnt"],"teacher":["ティーチャー","ˈtiːtʃər"],"friend":["フレンド","frend"],"family":["ファミリィ","ˈfæməli"],"mother":["マザー","ˈmʌðər"],"father":["ファーザー","ˈfɑːðər"],"brother":["ブラザー","ˈbrʌðər"],"sister":["スィスター","ˈsɪstər"],
+  "book":["ブック","bʊk"],"pen":["ペン","pen"],"bag":["バッグ","bæɡ"],"desk":["デスク","desk"],"picture":["ピクチャー","ˈpɪktʃər"],"music":["ミュージック","ˈmjuːzɪk"],"movie":["ムーヴィ","ˈmuːvi"],"game":["ゲイム","ɡeɪm"],"sport":["スポート","spɔːrt"],"soccer":["サッカー","ˈsɒkər"],"tennis":["テニス","ˈtenɪs"],"baseball":["ベイスボール","ˈbeɪsbɔːl"],
+  "food":["フード","fuːd"],"water":["ウォーター","ˈwɔːtər"],"tea":["ティー","tiː"],"juice":["ジュース","dʒuːs"],"breakfast":["ブレックファスト","ˈbrekfəst"],"lunch":["ランチ","lʌntʃ"],"dinner":["ディナー","ˈdɪnər"],"apple":["アップル","ˈæpl"],"fish":["フィッシュ","fɪʃ"],"rice":["ライス","raɪs"],
+  "dog":["ドッグ","dɒɡ"],"cat":["キャット","kæt"],"bird":["バード","bɜːrd"],"animal":["アニマル","ˈænɪml"],"park":["パーク","pɑːrk"],"station":["ステイション","ˈsteɪʃn"],"house":["ハウス","haʊs"],"room":["ルーム","ruːm"],"city":["スィティ","ˈsɪti"],"country":["カントリィ","ˈkʌntri"],
+  "big":["ビッグ","bɪɡ"],"small":["スモール","smɔːl"],"new":["ニュー","nuː"],"old":["オウルド","oʊld"],"happy":["ハピィ","ˈhæpi"],"sad":["サッド","sæd"],"hungry":["ハングリィ","ˈhʌŋɡri"],"tired":["タイアド","ˈtaɪərd"],"busy":["ビジィ","ˈbɪzi"],"free":["フリー","friː"],"beautiful":["ビューティフル","ˈbjuːtɪfl"],"popular":["ポピュラー","ˈpɒpjələr"],"famous":["フェイマス","ˈfeɪməs"],"interesting":["インタレスティング","ˈɪntrəstɪŋ"],"difficult":["ディフィカルト","ˈdɪfɪkəlt"],"easy":["イージィ","ˈiːzi"],
+  "one":["ワン","wʌn"],"two":["トゥー","tuː"],"three":["スリー","θriː"],"four":["フォー","fɔːr"],"five":["ファイヴ","faɪv"],"six":["スィックス","sɪks"],"seven":["セヴン","ˈsevn"],"eight":["エイト","eɪt"],"nine":["ナイン","naɪn"],"ten":["テン","ten"],
+  "many":["メニィ","ˈmeni"],"much":["マッチ","mʌtʃ"],"some":["サム","sʌm"],"any":["エニィ","ˈeni"],"all":["オール","ɔːl"],"often":["オフン","ˈɔːfn"],"usually":["ユージュアリィ","ˈjuːʒuəli"],"sometimes":["サムタイムズ","ˈsʌmtaɪmz"],"always":["オールウェイズ","ˈɔːlweɪz"],"never":["ネヴァー","ˈnevər"],
+  "really":["リアリィ","ˈriːəli"],"just":["ジャスト","dʒʌst"],"also":["オールソウ","ˈɔːlsoʊ"],"together":["トゥゲザー","təˈɡeðər"],"again":["アゲイン","əˈɡen"],"only":["オウンリィ","ˈoʊnli"],"still":["スティル","stɪl"],"maybe":["メイビィ","ˈmeɪbi"],
+  "australia":["オーストレイリア","ɒˈstreɪliə"],"america":["アメリカ","əˈmerɪkə"],"japan":["ジャパン","dʒəˈpæn"],"english":["イングリッシュ","ˈɪŋɡlɪʃ"],"japanese":["ジャパニーズ","ˌdʒæpəˈniːz"],
+  "birthday":["バースデイ","ˈbɜːrθdeɪ"],"party":["パーティ","ˈpɑːrti"],"present":["プレゼント","ˈpreznt"],"festival":["フェスティヴァル","ˈfestɪvl"],"concert":["コンサート","ˈkɒnsərt"],"museum":["ミューズィアム","mjuˈziːəm"],"hospital":["ホスピタル","ˈhɒspɪtl"],"restaurant":["レストラント","ˈrestrɒnt"],
+  "team":["ティーム","tiːm"],"club":["クラブ","klʌb"],"member":["メンバー","ˈmembər"],"coach":["コウチ","koʊtʃ"],"fan":["ファン","fæn"],"win":["ウィン","wɪn"],"lose":["ルーズ","luːz"],"lost":["ロスト","lɒst"],
+  "hard":["ハード","hɑːrd"],"fast":["ファスト","fæst"],"early":["アーリィ","ˈɜːrli"],"late":["レイト","leɪt"],"long":["ロング","lɔːŋ"],"short":["ショート","ʃɔːrt"],
+  "thirsty":["サースティ","ˈθɜːrsti"],"delicious":["デリシャス","dɪˈlɪʃəs"],"yummy":["ヤミィ","ˈjʌmi"],"careful":["ケアフル","ˈkerfl"],"nervous":["ナーヴァス","ˈnɜːrvəs"],"excited":["イクサイティッド","ɪkˈsaɪtɪd"],"welcome":["ウェルカム","ˈwelkəm"],
+  "boy":["ボーイ","bɔɪ"],"girl":["ガール","ɡɜːrl"],"people":["ピープル","ˈpiːpl"],"man":["マン","mæn"],"woman":["ウーマン","ˈwʊmən"],"children":["チルドレン","ˈtʃɪldrən"],"time":["タイム","taɪm"],"place":["プレイス","pleɪs"],"thing":["スィング","θɪŋ"],"world":["ワールド","wɜːrld"],
+  "im":["アイム","aɪm"],"youre":["ユア","jʊər"],"hes":["ヒーズ","hiːz"],"shes":["シーズ","ʃiːz"],"its":["イッツ","ɪts"],"were":["ウィア","wɪər"],"theyre":["ゼア","ðeər"],"thats":["ザッツ","ðæts"],"whats":["ワッツ","wʌts"],"whos":["フーズ","huːz"],"wheres":["ウェアズ","weərz"],"hows":["ハウズ","haʊz"],"lets":["レッツ","lets"],
+  "dont":["ドウント","doʊnt"],"doesnt":["ダズント","ˈdʌznt"],"didnt":["ディドント","ˈdɪdnt"],"isnt":["イズント","ˈɪznt"],"arent":["アーント","ɑːrnt"],"cant":["キャント","kænt"],"wasnt":["ワズント","ˈwʌznt"],"ive":["アイヴ","aɪv"],"ill":["アイル","aɪl"],
+  "sydney":["スィドニィ","ˈsɪdni"],"tokyo":["トウキョウ","ˈtoʊkioʊ"],"london":["ランドン","ˈlʌndən"],"kenya":["ケニャ","ˈkenjə"],"philippines":["フィリピーンズ","ˈfɪlɪpiːnz"],"asia":["エイジャ","ˈeɪʒə"],"asian":["エイジャン","ˈeɪʒn"],
+  "cricket":["クリケット","ˈkrɪkɪt"],"rugby":["ラグビィ","ˈrʌɡbi"],"badminton":["バドミントン","ˈbædmɪntən"],"kanji":["カンジ","ˈkɑːndʒi"],"sushi":["スシ","ˈsuːʃi"],"map":["マップ","mæp"],"symbol":["スィンボル","ˈsɪmbl"],"shrine":["シュライン","ʃraɪn"],"market":["マーケット","ˈmɑːrkɪt"],"crowded":["クラウディッド","ˈkraʊdɪd"]
+};
+let rbMode=lsGet('eig_rb')||'none';
+function pronOf(word){
+  const k=norm(word).replace(/'s$/,'').replace(/'/g,'');
+  // 単語帳シートの読み情報が優先(cards[].kana / cards[].ipa)
+  const c=(DATA.cards||[]).find(x=>norm(x.en)===k && (x.kana||x.ipa));
+  if(c) return [c.kana||'', c.ipa||''];
+  return PRON[k]||PRON[norm(word)]||null;
+}
+function applyRuby(){
+  const sh=document.querySelector('#readView .sheet');
+  if(!sh) return;
+  sh.classList.toggle('rb-on', rbMode!=='none');
+  $('rbNone').classList.toggle('on', rbMode==='none');
+  $('rbKana').classList.toggle('on', rbMode==='kana');
+  $('rbIpa').classList.toggle('on', rbMode==='ipa');
+  if(rbMode==='none') return;
+  $('sents').querySelectorAll('.w').forEach(w=>{
+    const rb=w.querySelector('.rb'); if(!rb) return;
+    const raw=w.textContent.replace(/\s+/g,'');
+    const p=pronOf(raw);
+    rb.className='rb'+(rbMode==='ipa'?' ipa':'');
+    rb.textContent = p ? (rbMode==='kana'?p[0]:p[1]) : '';
+  });
+}
+function setRb(m){ rbMode=m; lsSet('eig_rb',m); applyRuby(); }
+$('rbNone').onclick=()=>setRb('none');
+$('rbKana').onclick=()=>setRb('kana');
+$('rbIpa').onclick=()=>setRb('ipa');
 
 /* ---- マスク表示(暗唱練習):単語を隠す。タップでめくれて発音 ---- */
 let maskLv=0;
@@ -2394,8 +2576,8 @@ function applySent(i, wordHas, wordOk, pct){
     w.classList.add(wordOk[j]?'ok':'miss');
   });
   const sc=el.querySelector('.score');
-  sc.textContent=`一致率 ${pct}%`+(pct>=90?' 🎉':pct>=70?' 👍':' 🔁 赤い単語をもう一度');
-  sc.style.color=pct>=70?'var(--ok)':'var(--miss)';
+  sc.textContent=(pct>=90?'よく通じたよ!':pct>=70?'だいたい通じたよ':'赤い単語をもう一度')+`(参考: 一致 ${pct}%)`;
+  sc.style.color='var(--ink-soft)'; sc.style.fontWeight='500'; sc.style.fontSize='13px';
   sc.classList.add('show');
   if(!(i in oralScores)||pct>oralScores[i]) oralScores[i]=pct;
   updateBest();
@@ -2407,12 +2589,7 @@ function wpmOf(spokenText, durMs){
   const n=String(spokenText).trim().split(/\s+/).filter(Boolean).length;
   return Math.round(n/(durMs/60000));
 }
-function wpmStars(wpm){
-  if(!wpm) return '';
-  if(wpm>=95) return '⚡なめらかさ ★★★('+wpm+'語/分)';
-  if(wpm>=65) return '⚡なめらかさ ★★☆('+wpm+'語/分)';
-  return '⚡なめらかさ ★☆☆('+wpm+'語/分)— 単語を切らずに、つなげて読んでみよう';
-}
+function wpmStars(wpm){ return ''; }
 function grade(i, spokenText, durMs){
   const flatT=[], mapT=[];
   sents[i].words.forEach((w,j)=>{ tokensOf(w).forEach(t=>{ flatT.push(t); mapT.push(j); }); });
@@ -2423,12 +2600,6 @@ function grade(i, spokenText, durMs){
   flatT.forEach((t,k)=>{ wordHas[mapT[k]]++; if(!hit[k]) wordOk[mapT[k]]=false; });
   applySent(i, wordHas, wordOk, pct);
   const el=$('sents').querySelector(`.sent[data-i="${i}"]`);
-  const wpm=wpmOf(spokenText, durMs);
-  if(wpm){
-    oralWpm[i]=wpm;
-    const sc=el.querySelector('.score');
-    sc.textContent += ' ・ '+wpmStars(wpm);
-  }
   const hd=el.querySelector('.heard');
   hd.textContent='🎧 きこえた音声: “'+spokenText.trim()+'”';
   hd.classList.add('show');
@@ -2446,12 +2617,9 @@ function gradeAll(spokenText, durMs){
   });
   per.forEach((p,i)=>{ applySent(i, p.has, p.ok, p.tok?Math.round(p.good/p.tok*100):0); });
   const total=flatT.length, good=hit.filter(Boolean).length;
-  const wpm=wpmOf(spokenText, durMs);
-  if(wpm) oralWpm['all']=wpm;
-  $('heardAll').innerHTML='🎧 <b>きこえた音声(通し読み)</b>:<br>“'+esc(spokenText.trim())+'”'
-    +(wpm?('<br>'+esc(wpmStars(wpm))):'');
+  $('heardAll').innerHTML='🎧 <b>きこえた音声(通し読み)</b>:<br>“'+esc(spokenText.trim())+'”';
   $('heardAll').classList.add('show');
-  toast(`全文の一致率 ${total?Math.round(good/total*100):0}%`+(wpm?` ・ ${wpm}語/分`:''),3200);
+  toast('きこえた音声をチェックしてみよう',2500);
   updateSubmit();
 }
 function oralAvg(){
@@ -2476,14 +2644,15 @@ $('submitBtn').onclick=()=>{
   const keys=Object.keys(oralScores);
   if(!keys.length) return;
   const avg=oralAvg();
-  const wk=Object.values(oralWpm).filter(Boolean);
-  const wAvg=wk.length?Math.round(wk.reduce((s,x)=>s+x,0)/wk.length):0;
   $('submitBtn').disabled=true;
+  $('submitBtn').textContent='送信中…';
   save('音読', curP.title, avg,
-    `${keys.length}/${sents.length}文・平均${avg}%`+(wAvg?`・${wAvg}語/分`:''), ok=>{
-    if(ok){ toast('✓ 提出しました(平均 '+avg+'%'+(wAvg?'・'+wAvg+'語/分':'')+')',3000); currentTask=null;
+    `${keys.length}/${sents.length}文・平均${avg}%`, ok=>{
+    if(ok){ toast('✓ 提出しました(平均 '+avg+'%)',3000); currentTask=null;
+      tutorScene('submit_ok');
       setTimeout(()=>{ show('homeView'); renderRead(); },1200); }
-    else $('submitBtn').disabled=false;
+    else{ $('submitBtn').disabled=false; updateSubmit();
+      toast('⚠ 提出を送信できませんでした。電波を確認してもう一度おしてね',4000); }
   });
 };
 
@@ -2664,8 +2833,8 @@ function uploadAudio(blob){
 const TKEY=(()=>{ try{ return new URLSearchParams(location.search).get('t')||''; }catch(e){ return ''; } })();
 const SCHEMA={
   '教材':[['タイトル'],['レベル','sel'],['カテゴリ'],['英文(改行で行分け。「Boy: Hi.」形式で話者ラベル)','ta'],['日本語訳(「/」区切りで文ごと対応・任意)','ta'],['リンク(任意・教科書QRコンテンツ等のURL。生徒の本文画面にボタン表示)']],
-  '単語帳':[['英語'],['意味'],['種別','sel'],['レベル','sel'],['例文(並べかえに使用・任意)','ta'],['セット名','sel']],
-  '宿題':[['課題名'],['タイプ','sel'],['対象','sel'],['締切','sel'],['メモ(テストは「10分」等で制限時間)']],
+  '単語帳':[['英語'],['意味'],['種別','sel'],['レベル','sel'],['例文(並べかえに使用・任意)','ta'],['セット名','sel'],['読み・カタカナ(任意)'],['発音記号(任意)']],
+  '宿題':[['課題名'],['タイプ','sel'],['対象','sel'],['締切','sel'],['メモ(テスト=「10分」等で制限時間 /「順番どおり」で出題順固定)']],
   '名簿':[['クラス(例 1-2)'],['出席番号'],['名前'],['PIN(任意・なりすまし防止)']],
   '問題集':[['問題文(穴埋めは ___ を入れる/整序は日本語)','ta'],['選択肢A(4択のみ)'],['選択肢B'],['選択肢C'],['選択肢D'],['正解(4択=正解の選択肢と同じ文字列)'],['解説','ta'],['形式','sel'],['ジャンル','sel'],['セット名','sel']]
 };
@@ -2689,13 +2858,13 @@ function selOptions(sheet, idx){
     if(idx===3) return dueOpts;
   }
   if(sheet==='問題集'){
-    if(idx===7) return ['4択','穴埋め','整序'];
+    if(idx===7) return ['4択','穴埋め','整序','瞬間英作文'];
     if(idx===8) return ['単語','熟語','文法'];
     if(idx===9) return qSets;
   }
   return null;
 }
-let tSheet='ダッシュボード', tRow=-1;
+let tSheet='ダッシュボード', tRow=-1, tQSet=null;
 function initTeacher(){
   if(!TKEY) return;
   $('navBar').style.display='none';
@@ -2707,9 +2876,15 @@ function initTeacher(){
   $('pane-teacher').innerHTML='<div class="loading">読みこみ中…</div>';
   document.querySelector('#homeView header h1').textContent='English AI Tutor 📋 管理';
 }
+function tDataRaw(){ return tData_(); }
 function tData(){
+  const d=tData_();
+  if(tSheet==='問題集'&&tQSet) return d.filter(x=>String(x.v[9]||'')===tQSet);
+  return d;
+}
+function tData_(){
   if(tSheet==='教材') return DATA.passages.map(p=>({id:p.id, v:[p.title,p.level,p.category,p.text,p.translation,p.link||'']}));
-  if(tSheet==='単語帳') return DATA.cards.map(c=>({id:c.id, v:[c.en,c.ja,c.kind,c.level,c.ex,c.set]}));
+  if(tSheet==='単語帳') return DATA.cards.map(c=>({id:c.id, v:[c.en,c.ja,c.kind,c.level,c.ex,c.set,c.kana||'',c.ipa||'']}));
   if(tSheet==='名簿') return DATA.roster.map((r,i)=>({id:i, v:[r.cls,r.num,r.name,'']}));
   if(tSheet==='問題集') return (DATA.questions||[]).map(q=>{
     const a=q.a||[];
@@ -2719,7 +2894,7 @@ function tData(){
 }
 function renderTeacher(){
   const el=$('pane-teacher');
-  const tabs=['ダッシュボード','教材','単語帳','宿題','問題集','名簿','⚙設定'];
+  const tabs=['ダッシュボード','生徒一覧','教材','単語帳','宿題','問題集','名簿','⚙設定'];
   let html='<div class="chips">'+tabs.map(s=>`<button class="chip ${s===tSheet?'on':''}" data-s="${s}">${s}</button>`).join('')
     +'<button class="chip" id="openStudent">🔗 生徒画面</button></div>';
   if(tSheet==='ダッシュボード'){
@@ -2727,7 +2902,37 @@ function renderTeacher(){
     html+=renderDash();
   }else if(tSheet==='⚙設定'){
     html+=renderSettings();
+  }else if(tSheet==='生徒一覧'){
+    html+=renderStudents();
   }else{
+    if(tSheet==='問題集'&&!tQSet){
+      // 階層1:セット一覧
+      const sets={};
+      (DATA.questions||[]).forEach(q=>{ (sets[q.set]=sets[q.set]||[]).push(q); });
+      html+='<button class="big pp" id="tBulk" style="width:100%; margin-bottom:12px">🤖 AIで一括追加(プロンプト付き)</button>';
+      html+='<div class="cards-grid">'+Object.keys(sets).map(sn=>{
+        const qs=sets[sn];
+        const kinds={};
+        qs.forEach(q=>kinds[q.fmt]=(kinds[q.fmt]||0)+1);
+        return `<button class="item qsetitem" data-set="${escA(sn)}">
+          <h2>📚 ${esc(sn)} <span style="font-weight:400; font-size:13px; color:var(--ink-soft)">${qs.length}問</span></h2>
+          <span class="cat">${Object.keys(kinds).map(k=>k+' '+kinds[k]).join(' ・ ')}</span>
+          <span class="hwquick chip" data-type="${qs.every(q=>q.fmt==='瞬間英作文')?'瞬間英作文':'問題'}" data-target="${escA(sn)}" style="align-self:flex-start">📌 宿題にする</span>
+        </button>`;
+      }).join('')+'</div>';
+      if(!Object.keys(sets).length) html+='<div class="empty">問題がまだありません。「🤖AIで一括追加」からどうぞ</div>';
+      el.innerHTML=html;
+      wireTeacher(el);
+      el.querySelectorAll('.qsetitem').forEach(b=>b.onclick=e=>{
+        if(e.target.classList.contains('hwquick')) return;
+        tQSet=b.dataset.set; renderTeacher();
+      });
+      return;
+    }
+    if(tSheet==='問題集'&&tQSet){
+      html+=`<button class="chip" id="qsetBack" style="margin-bottom:10px">‹ セット一覧へ</button>
+        <div class="dash-sec" style="margin-top:0">📚 ${esc(tQSet)}</div>`;
+    }
     html+='<button class="big" id="tAdd" style="width:100%; margin-bottom:12px">＋ '+tSheet+'を追加</button>';
     if(tSheet==='問題集'||tSheet==='単語帳')
       html+='<button class="big pp" id="tBulk" style="width:100%; margin-bottom:12px">🤖 AIで一括追加(プロンプト付き)</button>';
@@ -2754,7 +2959,13 @@ function renderTeacher(){
     }
   }
   el.innerHTML=html;
-  el.querySelectorAll('.chip[data-s]').forEach(c=>c.onclick=()=>{ tSheet=c.dataset.s; tStudent=null; renderTeacher(); });
+  wireTeacher(el);
+}
+function wireTeacher(el){
+  el.querySelectorAll('.chip[data-s]').forEach(c=>c.onclick=()=>{ tSheet=c.dataset.s; tStudent=null; tQSet=null; renderTeacher(); });
+  const qb=el.querySelector('#qsetBack');
+  if(qb) qb.onclick=()=>{ tQSet=null; renderTeacher(); };
+  el.querySelectorAll('.srt').forEach(c=>c.onclick=()=>{ tSortKey=c.dataset.k; renderTeacher(); });
   const os=el.querySelector('#openStudent');
   if(os) os.onclick=()=>{
     const w=window.open(location.origin+location.pathname, '_blank');
@@ -2771,7 +2982,10 @@ function renderTeacher(){
     });
   };
   const ta=el.querySelector('#tAdd');
-  if(ta) ta.onclick=()=>openEdit(-1);
+  if(ta) ta.onclick=()=>{
+    if(tSheet==='問題集'&&tQSet) openEdit(-1, ['','','','','','','','4択','文法',tQSet]);
+    else openEdit(-1);
+  };
   const tb2=el.querySelector('#tBulk');
   if(tb2) tb2.onclick=()=>openBulk(tSheet);
   el.querySelectorAll('.titem').forEach(b=>b.onclick=()=>openEdit(+b.dataset.id));
@@ -2784,6 +2998,8 @@ function renderTeacher(){
   });
   const sb=el.querySelector('#stBack');
   if(sb) sb.onclick=()=>{ tStudent=null; renderTeacher(); };
+  // 生徒名リンクは一覧・ダッシュボード共通
+
   el.querySelectorAll('.hwquick').forEach(b=>{
     b.onclick=e=>{ e.stopPropagation(); quickHomework(b.dataset.type, b.dataset.target); };
   });
@@ -2874,6 +3090,54 @@ function renderDash(){
   html+='<button class="copybtn" id="copyTSV">📋 提出記録をコピー(Excel貼り付け用)</button>';
   return html;
 }
+/* ---- 生徒一覧(並び替え可) ---- */
+let tSortKey='名簿順';
+function renderStudents(){
+  if(tStudent){
+    const recs=(DATA.allRecords||[]).filter(r=>r.name!=='先生'&&!/^先生/.test(r.name));
+    return renderStudent(tStudent, recs);
+  }
+  const recs=(DATA.allRecords||[]).filter(r=>r.name!=='先生'&&!/^先生/.test(r.name));
+  // 名簿+提出実績から生徒リストを構成
+  const order={};
+  (DATA.roster||[]).forEach((s,i)=>order[s.display]=i);
+  const names=new Set([...(DATA.roster||[]).map(s=>s.display), ...recs.map(r=>r.name)]);
+  const rows=[...names].map(n=>{
+    const my=recs.filter(r=>r.name===n);
+    const avg=my.length?Math.round(my.reduce((s,r)=>s+r.score,0)/my.length):0;
+    let weak=0;
+    try{
+      const md=JSON.parse((DATA.masteryAll||{})[n]||'{}');
+      weak=Object.keys(md).filter(k=>(md[k].w||0)>0&&(md[k].b??1)<=1).length;
+    }catch(e){}
+    return {n:n, cnt:my.length, avg:avg, last:my.length?my[my.length-1].date:'', weak:weak,
+      ord:(n in order)?order[n]:999};
+  });
+  const sorts={
+    '名簿順':(a,b)=>a.ord-b.ord||a.n.localeCompare(b.n,'ja'),
+    '提出数':(a,b)=>b.cnt-a.cnt,
+    '平均点':(a,b)=>b.avg-a.avg,
+    '平均点(低い順)':(a,b)=>a.avg-b.avg,
+    'にがて数':(a,b)=>b.weak-a.weak,
+    '最終提出':(a,b)=>String(b.last).localeCompare(String(a.last))
+  };
+  rows.sort(sorts[tSortKey]||sorts['名簿順']);
+  let html='<div class="dash-sec" style="margin-top:0">👥 生徒一覧('+rows.length+'名)— タップで個人カルテ</div>';
+  html+='<div class="chips" style="margin-bottom:10px">'+Object.keys(sorts).map(k=>
+    `<button class="chip srt ${k===tSortKey?'on':''}" data-k="${k}">${k}</button>`).join('')+'</div>';
+  html+='<div style="display:grid; grid-template-columns:1fr auto auto auto auto; gap:4px 12px; font-size:13.5px; align-items:center">'
+    +'<b style="color:var(--ink-soft); font-size:12px">名前</b><b style="color:var(--ink-soft); font-size:12px">提出</b><b style="color:var(--ink-soft); font-size:12px">平均</b><b style="color:var(--ink-soft); font-size:12px">にがて</b><b style="color:var(--ink-soft); font-size:12px">最終</b>'
+    +rows.map(r=>
+      `<button class="stlink" data-n="${escA(r.n)}" style="text-align:left; padding:6px 0">${esc(r.n)}</button>`
+      +`<span>${r.cnt}</span>`
+      +`<span style="font-weight:700; color:${r.cnt?(r.avg>=70?'var(--ok)':'var(--miss)'):'var(--ink-soft)'}">${r.cnt?r.avg+'%':'—'}</span>`
+      +`<span style="color:${r.weak?'var(--miss)':'var(--ink-soft)'}">${r.weak||'—'}</span>`
+      +`<span style="font-size:12px; color:var(--ink-soft)">${esc(r.last||'—')}</span>`
+    ).join('')+'</div>';
+  html+='<p class="thelp" style="margin-top:10px">※ 平均=全提出の平均%。にがて=箱0〜1の問題数。並び替えは上のチップで。</p>';
+  return html;
+}
+
 /* ---- 個人カルテ ---- */
 function renderStudent(name, recs){
   const my=recs.filter(r=>r.name===name);
@@ -2935,7 +3199,7 @@ function renderSettings(){
   <div class="field"><label>チューターの名前(生徒画面に表示)</label>
     <input id="st_name" value="${escA(s.name)}"></div>
   <div class="dash-sec">💬 AIトーク(ChatGPT API)</div>
-  <p class="thelp">platform.openai.com でAPIキーを取得して登録すると、生徒がAIと英語で対話できます(gpt-4o-miniなら1会話 約0.1〜0.5円)。キーはサーバー内にのみ保存され、生徒には見えません。</p>
+  <p class="thelp">platform.openai.com でAPIキーを取得して登録すると、生徒がAIと英語で対話できます(gpt-4o-miniなら1会話 約0.1〜0.5円)。キーは<b>スクリプトプロパティ</b>(サーバー内)に保存され、スプレッドシートにも生徒にも見えません。手動で設定する場合はGASエディタ→プロジェクトの設定→スクリプトプロパティに OPENAI_API_KEY を追加でもOK。</p>
   <div class="field"><label>トーク機能</label>
     <select id="st_chat" style="width:100%; font-size:16px; padding:10px 12px; border:1.5px solid var(--line); border-radius:10px; background:var(--paper)">
       <option value="ON" ${s.chatOn?'selected':''}>ON(生徒が使える)</option>
